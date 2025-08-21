@@ -70,6 +70,29 @@ for i in {1..120}; do
   sleep 1
 done
 
+echo "[$(date '+%Y-%m-%d %T')] Waiting for /fastbot/odom topic..."
+for _ in {1..120}; do
+  ros2 topic list | grep -qx "/fastbot/odom" && break
+  sleep 1
+done
+
+echo "[$(date '+%Y-%m-%d %T')] Waiting for first /fastbot/odom message..."
+python3 - <<'PY'
+import rclpy
+from rclpy.node import Node
+from nav_msgs.msg import Odometry
+class W(Node):
+  def __init__(self):
+    super().__init__('wait_for_odom_once')
+    self.create_subscription(Odometry, '/fastbot/odom', self.cb, 10)
+  def cb(self, _):
+    print("Received first /fastbot/odom", flush=True)
+    rclpy.shutdown()
+rclpy.init()
+r=W(); rclpy.spin(r)
+PY
+
+
 # --- Run tests ---
 echo "[$(date '+%Y-%m-%d %T')] Running colcon tests..."
 set +e
