@@ -100,7 +100,7 @@ set -e
 if [[ $ODOM_RC -ne 0 ]]; then
   echo "[$(date '+%Y-%m-%d %T')] WARN: odom wait script exited with $ODOM_RC (timeout or early exit). Continuing…"
 fi
-
+# trigger test
 # --- Run tests ---
 echo "[$(date '+%Y-%m-%d %T')] Running colcon tests..."
 set +e
