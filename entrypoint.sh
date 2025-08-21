@@ -34,7 +34,7 @@ if [[ -z "${DISPLAY:-}" || "${CI:-0}" = "1" ]]; then
   echo "[$(date '+%Y-%m-%d %T')] Starting Xvfb on :1 (headless mode)..."
   Xvfb :1 -screen 0 1280x1024x24 >/tmp/xvfb.log 2>&1 &
   XVFB_PID=$!
-  export DISPLAY=:1
+  export DISPLAY= :1
 fi
 
 # --- Launch Gazebo world ---
@@ -53,6 +53,14 @@ for _ in {1..120}; do
   sleep 1
 done
 
+# --- Check if controllers are active ---
+echo "[$(date '+%Y-%m-%d %T')] Checking controller status..."
+ros2 control list_controllers
+
+# --- Unpause physics if needed ---
+echo "[$(date '+%Y-%m-%d %T')] Ensuring simulation is unpaused..."
+ros2 service call /unpause_physics std_srvs/srv/Empty >/dev/null 2>&1 || true
+
 # --- Launch action server ---
 echo "[$(date '+%Y-%m-%d %T')] Starting fastbot action server..."
 ros2 run fastbot_waypoints fastbot_action_server >/tmp/action_server.log 2>&1 &
@@ -64,6 +72,10 @@ for _ in {1..120}; do ros2 action list | grep -q '^/fastbot_as$' && break; sleep
 # --- Ensure odom is really publishing once (robust, non-hanging) ---
 echo "[$(date '+%Y-%m-%d %T')] Waiting for /fastbot/odom topic..."
 for _ in {1..120}; do ros2 topic list | grep -qx "/fastbot/odom" && break; sleep 1; done
+
+echo "[$(date '+%Y-%m-%d %T')] Checking current odometry..."
+# Get current odometry before tests
+ros2 topic echo /fastbot/odom --once --field pose.pose.position
 
 echo "[$(date '+%Y-%m-%d %T')] Waiting for first /fastbot/odom message..."
 set +e  # don't abort the whole script if the check times out
@@ -78,8 +90,8 @@ def main():
     node = Node('wait_for_odom_once')
     got = Future()
 
-    def cb(_msg):
-        print("Received first /fastbot/odom", flush=True)
+    def cb(msg):
+        print(f"Received first /fastbot/odom: position x={msg.pose.pose.position.x}, y={msg.pose.pose.position.y}, z={msg.pose.pose.position.z}", flush=True)
         if not got.done():
             got.set_result(True)
 
@@ -100,13 +112,26 @@ set -e
 if [[ $ODOM_RC -ne 0 ]]; then
   echo "[$(date '+%Y-%m-%d %T')] WARN: odom wait script exited with $ODOM_RC (timeout or early exit). Continuing…"
 fi
-# trigger test
-# --- Run tests ---
+
+# --- Debug: Check action server status ---
+echo "[$(date '+%Y-%m-%d %T')] Checking action server status..."
+ros2 action info /fastbot_as
+
+# --- Run tests with increased timeout ---
 echo "[$(date '+%Y-%m-%d %T')] Running colcon tests..."
 set +e
-colcon test --packages-select fastbot_waypoints --event-handler=console_direct+
+colcon test --packages-select fastbot_waypoints --event-handler=console_direct+ --timeout 120
 TEST_RESULT=$?
-colcon test-result --all || true
+
+# --- Debug: Check action server logs if test fails ---
+if [[ $TEST_RESULT -ne 0 ]]; then
+  echo "[$(date '+%Y-%m-%d %T')] Test failed, showing action server logs:"
+  tail -50 /tmp/action_server.log || true
+  echo "[$(date '+%Y-%m-%d %T')] Showing Gazebo logs:"
+  tail -50 /tmp/gazebo.log || true
+fi
+
+colcon test-result --all --verbose
 set -e
 
 echo "[$(date '+%Y-%m-%d %T')] * RESULT: $( [ $TEST_RESULT -eq 0 ] && echo SUCCESS || echo FAILURE )"
